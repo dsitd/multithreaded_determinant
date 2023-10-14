@@ -1,76 +1,84 @@
 ﻿#include <iostream>
 #include <vector>
 #include <thread>
-#include <chrono>
+#include <mutex>
 
-double get_minor(const std::vector<std::vector<double>>& matrix, int row, int col) {
-    std::vector<std::vector<double>> new_matrix(matrix.size() - 1, std::vector<double>(matrix.size() - 1));
-    int n = static_cast<int>(matrix.size());
-    for (int i = 0; i < n - 1; i++) {
-        for (int j = 0; j < n - 1; j++) {
-            int newRow = (i < row) ? i : i + 1;
-            int newCol = (j < col) ? j : j + 1;
-            new_matrix[i][j] = matrix[newRow][newCol];
+std::vector<std::vector<std::vector<double>>> generateMinors(const std::vector<std::vector<double>>& matrix) { // получаем массив миноров
+    size_t n = matrix.size();
+    std::vector<std::vector<std::vector<double>>> minors;
+    for (size_t col = 0; col < n; ++col) {
+        std::vector<std::vector<double>> minorMatrix(n - 1, std::vector<double>(n - 1));
+        for (size_t i = 1; i < n; ++i) {
+            size_t minorCol = 0;
+            for (size_t j = 0; j < n; ++j) {
+                if (j != col) {
+                    minorMatrix[i - 1][minorCol] = matrix[i][j];
+                    minorCol++;
+                }
+            }
         }
+        minors.push_back(minorMatrix);
     }
-    double determinant = 0.0;
-    if (new_matrix.size() == 1) {
-        determinant = new_matrix[0][0];
-    }
-    else {
-        for (int j = 0; j < new_matrix.size(); j++) {
-            determinant += ((j % 2 == 0) ? 1.0 : -1.0) * new_matrix[0][j] * get_minor(new_matrix, 0, j);
-        }
-    }
-    return determinant;
+    return minors;
 }
 
-double get_determinant(const std::vector<std::vector<double>>& matrix, int num_threads) {
-    double determinant = 0.0;
-    int n = static_cast<int>(matrix.size());
+double determinant(const std::vector<std::vector<double>>& matrix, std::mutex& mtx, int& activeThreads, const int maxThreads) {
+    size_t n = matrix.size();
+    if (n == 1) return matrix[0][0];
+    if (n == 2) return matrix[0][0] * matrix[1][1] - matrix[0][1] * matrix[1][0];
 
-    std::vector<std::thread> threads(num_threads);
-    std::vector<double> results(num_threads, 0.0);
+    double det = 0.0;
 
-    for (int i = 0; i < num_threads; i++) {
-        threads[i] = std::thread([=, &results]() {
-            int start = i * n / num_threads;
-            int end = (i + 1) * n / num_threads;
-            for (int j = start; j < end; j++) {
-                results[i] += ((j % 2 == 0) ? 1.0 : -1.0) * matrix[0][j] * get_minor(matrix, 0, j);
+    auto minors = generateMinors(matrix);
+
+    for (size_t col = 0; col < n; ++col) { // каждый минор отправляем в поток если он свободен
+        if (activeThreads < maxThreads) {
+            {
+                std::lock_guard<std::mutex> lock(mtx);
+                activeThreads++;
             }
-            });
-    }
-    for (auto& thread : threads) {
-        thread.join();
-    }
-    for (int i = 0; i < num_threads; i++) {
-        determinant += results[i];
+            std::thread([&]() {
+                double minorValue = determinant(minors[col], std::ref(mtx), std::ref(activeThreads), maxThreads);
+
+                {
+                    std::lock_guard<std::mutex> lock(mtx);
+                    if (col % 2 == 0)
+                        det += matrix[0][col] * minorValue;
+                    else
+                        det -= matrix[0][col] * minorValue;
+
+                    activeThreads--;
+                }
+                }).join();
+        }
+        else {
+            double minorValue = determinant(minors[col], mtx, activeThreads, maxThreads);
+            if (col % 2 == 0)
+                det += matrix[0][col] * minorValue;
+            else
+                det -= matrix[0][col] * minorValue;
+        }
     }
 
-    return determinant;
+    return det;
 }
 
 int main() {
     std::vector<std::vector<double>> matrix = {
-        {6, 8, -1, -10},
-        {-4, 9, 4, -8},
-        {5, 8, 10, 2},
-        {0, 7, 3, -2}
-    };
+        {10, 10, 7, 8, 7, 5},
+        {8, 3, 6, 9, 1, 4},
+        {5, 7, 3, 6, 4, 6},
+        {2, 1, 10, 3, 1, 4},
+        {8, 3, 1, 2, 5, 4},
+        {6, 1, 4, 1, 3, 4}
+    }; // определитель 8480
 
-    int num_threads = 5;
-    double determinant = 0.0;
+    std::mutex mtx;
+    int activeThreads = 0;
+    const int maxThreads = 10;
 
-    auto start_time = std::chrono::high_resolution_clock::now();
-    determinant = get_determinant(matrix, num_threads);
-    auto end_time = std::chrono::high_resolution_clock::now();
-
-    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time).count();
-
-    std::cout << "Number of threads: " << num_threads << std::endl;
-    std::cout << "Determinant: " << determinant << std::endl;
-    std::cout << "Execution time: " << duration << " microseconds" << std::endl;
+    double det = determinant(matrix, mtx, activeThreads, maxThreads);
+    std::cout << "Determinant: " << det << std::endl;
 
     return 0;
 }
