@@ -3,7 +3,7 @@
 #include <thread>
 #include <mutex>
 
-std::vector<std::vector<std::vector<double>>> generateMinors(const std::vector<std::vector<double>>& matrix) { // получаем массив миноров
+std::vector<std::vector<std::vector<double>>> generateMinors(const std::vector<std::vector<double>>& matrix) {
     size_t n = matrix.size();
     std::vector<std::vector<std::vector<double>>> minors;
     for (size_t col = 0; col < n; ++col) {
@@ -28,17 +28,16 @@ double determinant(const std::vector<std::vector<double>>& matrix, std::mutex& m
     if (n == 2) return matrix[0][0] * matrix[1][1] - matrix[0][1] * matrix[1][0];
 
     double det = 0.0;
+    std::vector<std::thread> threads;
 
     auto minors = generateMinors(matrix);
 
-    for (size_t col = 0; col < n; ++col) { // каждый минор отправляем в поток если он свободен
+    for (size_t col = 0; col < n; ++col) {
         if (activeThreads < maxThreads) {
-            {
-                std::lock_guard<std::mutex> lock(mtx);
-                activeThreads++;
-            }
-            std::thread([&]() {
-                double minorValue = determinant(minors[col], std::ref(mtx), std::ref(activeThreads), maxThreads);
+            std::lock_guard<std::mutex> lock(mtx);
+            activeThreads++;
+            threads.emplace_back([&, col]() {
+                double minorValue = determinant(minors[col], mtx, activeThreads, maxThreads);
 
                 {
                     std::lock_guard<std::mutex> lock(mtx);
@@ -49,7 +48,7 @@ double determinant(const std::vector<std::vector<double>>& matrix, std::mutex& m
 
                     activeThreads--;
                 }
-                }).join();
+                });
         }
         else {
             double minorValue = determinant(minors[col], mtx, activeThreads, maxThreads);
@@ -58,6 +57,10 @@ double determinant(const std::vector<std::vector<double>>& matrix, std::mutex& m
             else
                 det -= matrix[0][col] * minorValue;
         }
+    }
+    
+    for (auto& t : threads) {
+        t.join();
     }
 
     return det;
@@ -71,7 +74,7 @@ int main() {
         {2, 1, 10, 3, 1, 4},
         {8, 3, 1, 2, 5, 4},
         {6, 1, 4, 1, 3, 4}
-    }; // определитель 8480
+    };
 
     std::mutex mtx;
     int activeThreads = 0;
