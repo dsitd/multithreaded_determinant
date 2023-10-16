@@ -3,7 +3,7 @@
 #include <thread>
 #include <mutex>
 
-std::vector<std::vector<std::vector<double>>> generateMinors(const std::vector<std::vector<double>>& matrix) {
+std::vector<std::vector<std::vector<double>>> generateMinors(const std::vector<std::vector<double>>& matrix) { // generate minors
     size_t n = matrix.size();
     std::vector<std::vector<std::vector<double>>> minors;
     for (size_t col = 0; col < n; ++col) {
@@ -22,47 +22,28 @@ std::vector<std::vector<std::vector<double>>> generateMinors(const std::vector<s
     return minors;
 }
 
-double determinant(const std::vector<std::vector<double>>& matrix, std::mutex& mtx, int& activeThreads, const int maxThreads) {
+double determinant(const std::vector<std::vector<double>>& matrix, std::mutex& mtxDet) {
     size_t n = matrix.size();
     if (n == 1) return matrix[0][0];
     if (n == 2) return matrix[0][0] * matrix[1][1] - matrix[0][1] * matrix[1][0];
-
     double det = 0.0;
     std::vector<std::thread> threads;
-
     auto minors = generateMinors(matrix);
-
     for (size_t col = 0; col < n; ++col) {
-        if (activeThreads < maxThreads) {
-            std::lock_guard<std::mutex> lock(mtx);
-            activeThreads++;
-            threads.emplace_back([&, col]() {
-                double minorValue = determinant(minors[col], mtx, activeThreads, maxThreads);
-
-                {
-                    std::lock_guard<std::mutex> lock(mtx);
-                    if (col % 2 == 0)
-                        det += matrix[0][col] * minorValue;
-                    else
-                        det -= matrix[0][col] * minorValue;
-
-                    activeThreads--;
-                }
-                });
-        }
-        else {
-            double minorValue = determinant(minors[col], mtx, activeThreads, maxThreads);
+        threads.emplace_back([&, col]() {
+        double minorValue = determinant(minors[col], mtxDet);
+        {
+            std::lock_guard<std::mutex> lock(mtxDet);
             if (col % 2 == 0)
                 det += matrix[0][col] * minorValue;
             else
                 det -= matrix[0][col] * minorValue;
         }
+        });
     }
-    
     for (auto& t : threads) {
         t.join();
     }
-
     return det;
 }
 
@@ -76,11 +57,9 @@ int main() {
         {6, 1, 4, 1, 3, 4}
     };
 
-    std::mutex mtx;
-    int activeThreads = 0;
-    const int maxThreads = 10;
+    std::mutex mtxDet;
 
-    double det = determinant(matrix, mtx, activeThreads, maxThreads);
+    double det = determinant(matrix, mtxDet);
     std::cout << "Determinant: " << det << std::endl;
 
     return 0;
